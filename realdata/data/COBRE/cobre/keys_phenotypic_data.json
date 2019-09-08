@@ -1,0 +1,11 @@
+{
+    "ID": " Identification Number - unique for each participant (expect an integer).",
+    "Current Age": "Current age of the participant (expect an integer, number of years).",
+    "Gender": "sex of the participant (expect 'Male' or 'Female').", 
+    "Handedness": "Hand dominance of the participant (expect 'Right', 'Left' or 'Both').",
+    "Subject Type": "Diagnostic status of the participant (expect 'Control', no clinical diagnosis was made, or 'Patient', diagnosis of schizophrenia.",
+    "Diagnosis": "Clinical diagnosis made for the participant, based on the Diagnostic and Statistical Manual of Mental Disorders (DSM), (expect 'None', for control participants, 290.3 or other similarly formed numbers, code for specific diagnosis as described in http://www.icd9data.com/2007/Volume1/290-319/",
+    "Frames OK": "Number of time frames deemed to have an acceptable level of motion (expect an integer)",
+    "FD": "Measure of average frame displacement on raw time series, as defined by Power et al., Neuroimage 2012 (expect a floating point value)",
+    "FD Scrubbed": "Measure of average frame displacement on time series after suppression of time frames with excessive motion, as defined by Power et al., Neuroimage 2012 (expect a floating point value)"
+}
