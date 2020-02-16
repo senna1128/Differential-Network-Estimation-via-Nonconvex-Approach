@@ -80,6 +80,7 @@ GenData(10000,30,1,1,3)
 GenData(20000,30,2,1,3)
 
 # generate dataset for showing convergence result only
+# may adjust step size a bit sometimes
 GenData(150,100,1,6,1)
 GenData(150,100,2,6,1)
 
