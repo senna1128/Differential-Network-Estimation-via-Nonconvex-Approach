@@ -21,13 +21,20 @@ from nilearn import plotting
 
 
 # Import function
-os.chdir('/Users/senna/course/Mladen/pro3/simulation/realdata/mymethod')
+os.chdir('/Users/senna/')
+
+# remove file
+filelist = glob.glob(os.getcwd() + '/MyResult' + '/*')
+for f in filelist:
+    os.remove(f)
+print('Remove result file. Done!')
+
 
 from main2 import *
 
-random.seed(2019)
-np.random.seed(2019)
 
+random.seed(2020)
+np.random.seed(2020)
 
 MyMain()
 

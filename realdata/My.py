@@ -10,7 +10,7 @@ import os
 import glob
 
 
-os.chdir('/Users/senna/course/Mladen/pro3/simulation/realdata')
+os.chdir('/Users/senna/course/Mladen/project/pro3/BiometrikaRevision/simu/realdata')
 
 # remove csv file in output folder
 filelist = [ f for f in os.listdir(os.getcwd() + '/data/Output')]

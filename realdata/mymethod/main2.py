@@ -13,6 +13,158 @@ import glob
 
 
 
+def MyMain(DataDir = os.getcwd() + '/../data/Groupdata/', OutputDir = os.getcwd() + '/MyResult'):
+    # load data
+    X = pd.read_csv(DataDir + 'Control.csv', index_col=0).values
+    Y = pd.read_csv(DataDir + 'Test.csv', index_col=0).values
+    nx = np.size(X,0)
+    ny = np.size(Y,0)
+    if nx<ny:
+        Y = Y[random.sample(range(ny), nx), :]
+    else:
+        X = X[random.sample(range(nx), ny), :]
+    
+    # separate into training set and test set (or validation set)
+    TrainX, TestX = SplitData(X)
+    TrainY, TestY = SplitData(Y)
+    
+    # select parameter
+    SelectParam = ChooseComb(TrainX, TrainY, TestX, TestY)
+              
+    # Use the selected parameters to calculate the error
+    Result = OurApproach(TrainX, TrainY, SelectParam)
+    
+    # calculate test loss
+    testloss1, testloss2, testloss3 = Loss(TestX, TestY, Result)
+    print('objective loss', Result.ObjLoss[-1], 'selected rank', int(SelectParam[3]))
+    print('test loss', [testloss1, testloss2, testloss3])
+    # define output file and write setup of n,d,r
+    SaveFile = OutputDir + '/myLoss.txt'
+    with open(SaveFile, 'w+') as f:
+         print('Loss: [{}, {}, {}]'.format(testloss1, testloss2, testloss3), file = f)
+
+    
+    # save result to txt file
+    SS = pd.DataFrame(Result.Sparse)
+    SS.to_csv(OutputDir + '/mySparse.csv')
+            
+
+
+
+
+
+
+# This function implements our proposed algorithm in Stage I: initialization
+# hatSigmaX: sample covariance in one group
+# hatSigmaY: sample covariance in one group
+# alphahat, shat, rhat: tuning parameter
+# n: sample size
+
+def OurInitial(hatSigmaX, hatSigmaY, alphahat, shat, rhat, n):
+    d = np.size(hatSigmaX, 0)
+    TildeSigmaX = (n-1)/(n-d-2)*hatSigmaX
+    TildeSigmaY = (n-1)/(n-d-2)*hatSigmaY
+    Deltahat = np.linalg.inv(TildeSigmaX) - np.linalg.inv(TildeSigmaY)
+    JsDeltahat = HardTrun(Deltahat, shat)
+    S0 = PropTrun(JsDeltahat, alphahat)
+    if rhat >= 1:
+        R0 = Deltahat - S0
+        U0, r1hat = LtoU(R0, rhat, 0)
+        L0 = UtoL(U0, r1hat)
+        return S0, U0, L0, r1hat
+    else:
+        return S0, np.zeros((d, 0)), np.zeros((d,d)), 0
+
+
+
+
+
+# This function implements our proposed algorithm in Stage II: convergence
+# S0, U0, L0: initial value
+# hatSigmaX: sample covariance of X
+# hatSigmaY: sample covariance of Y
+# tSparse, tLowrank: true sparse, true lowrank
+# d, rhat, r1hat: sample size, dimension, rank, positive inertia
+# betahat, alphahat, shat: tuning parameter
+# eta1, eta2: step size
+# TrueError: vector to save error
+# ObjLoss: objective loss
+# Result: class to save result
+# maxIter: maximum iteration
+# eps: precision error
+
+        
+def OurConverg(S0, U0, L0, hatSigmaX, hatSigmaY, tSparse, tLowrank, d, rhat, r1hat, betahat,\
+               alphahat, shat, eta1, eta2, TrueError, ObjLoss, Result, maxIter, eps):
+    hatDiff = hatSigmaY - hatSigmaX
+    # Iteration
+    k = 0
+    Idend = 1
+    Lambda0 = genLambda(rhat, r1hat)
+    if rhat > 0:
+        Const = np.linalg.norm(U0,2)
+
+    TimeStart = time.time()
+    while k <= maxIter:
+        # calculate some common terms
+        Term1 = S0 + L0
+        Term2 = np.matmul(np.matmul(hatSigmaX, Term1), hatSigmaY)
+        Term3 = np.matmul(np.matmul(hatSigmaY, Term1), hatSigmaX)
+        Term4 = np.matmul(U0, Lambda0)
+        Term5 = np.matmul(Term2, Term4)
+        Term6 = np.matmul(Term3, Term4)
+        Term7 = np.matmul(hatDiff, Term4)
+        Term8 = np.matmul(U0.T, U0)
+
+        # iteration S
+        S12 = S0 - eta1 * (0.5*Term2 + 0.5*Term3 - hatDiff)
+        S13 = HardTrun(S12, shat)
+        S1 = PropTrun(S13, alphahat)
+        # iteration U
+        if rhat>0:
+            U12 = U0 - eta2 * (Term5 + Term6 - 2 * Term7) - eta2/2 * (np.matmul(U0, Term8) \
+                           - np.matmul(np.matmul(Term4, Term8), Lambda0))
+            Incobound = 2 * Const * (betahat*rhat/d)**(1/2)
+            U1 = ProjInco(U12, Incobound)
+        else:
+            U1 = U0    
+        # calculate error
+        succeps = MaxDist(S0, U0, S1, U1, r1hat, rhat)
+        L1 = UtoL(U1, r1hat)
+        TrueError = CalTrueErr(TrueError, S1, L1, tSparse, tLowrank)
+
+        ObjLoss = LossSampCov(ObjLoss, hatSigmaX, hatSigmaY, S1, U1, L1, r1hat)
+        if ObjLoss[-1] > ObjLoss[-2]:  # if loss increase, we need decrease step size
+            eta1 = eta1/(k+1)
+            eta2 = eta2/(k+1)        
+        if succeps <= eps:
+            Idend = 0
+            break
+        
+        S0 = S1.copy()
+        U0 = U1.copy()
+        L0 = L1.copy()
+        k = k + 1
+    
+    TimeEnd = time.time()
+    # save results
+    Result.CostTime =  TimeEnd - TimeStart
+    Result.Idend = Idend
+    Result.TrueError = TrueError
+    Result.ObjLoss = ObjLoss
+    Result.Sparse = S1
+    Result.Lowrank = L1
+    Result.tSparse = tSparse
+    Result.tLowrank = tLowrank
+    Result.Iternum = len(TrueError)
+    
+    return Result
+
+
+
+
+
+
 # This function does the data splitting step given any dataset
 # Dat: n by d dataset
 # Prob: probability of testdata
@@ -28,26 +180,6 @@ def SplitData(Dat, Prob = 0.5):
     
 
 
-# This function implements our proposed algorithm in Stage I: initialization
-# hatSigmaX: sample covariance in one group
-# hatSigmaY: sample covariance in one group
-# alphahat, shat, rhat: tuning parameter
-# n: sample size
-
-def OurInitial(hatSigmaX, hatSigmaY, alphahat, shat, rhat, n):
-    d = np.size(hatSigmaX, 0)
-    TildeSigmaX = (n-1)/(n-d+2)*hatSigmaX
-    TildeSigmaY = (n-1)/(n-d+2)*hatSigmaY
-    Deltahat = np.linalg.inv(TildeSigmaX) - np.linalg.inv(TildeSigmaY)
-    JsDeltahat = HardTrun(Deltahat, shat)
-    S0 = PropTrun(JsDeltahat, alphahat)
-    if rhat >= 1:
-        R0 = Deltahat - S0
-        U0, r1hat = LtoU(R0, rhat, 0)
-        L0 = UtoL(U0, r1hat)
-        return S0, U0, L0, r1hat
-    else:
-        return S0, np.zeros((d, 0)), np.zeros((d,d)), 0
 
 
 # This function defines the hard truncation on the symmetric matrix given a threshold index
@@ -97,6 +229,7 @@ def PropTrun(M, alpha):
 def LtoU(L, rhatThres, Id):
     EigVal, EigVec = np.linalg.eig(L)
     if Id == 0:
+        rhatThres = min(rhatThres, np.size(L,0))
         ThreseigVal = np.sort(np.abs(EigVal))[::-1][rhatThres-1]
         IdEig = (np.abs(EigVal)>=ThreseigVal)
         EigVal = EigVal[IdEig]
@@ -122,6 +255,14 @@ def LtoU(L, rhatThres, Id):
         return U, r, r1
 
 
+# This function generates Lambda by given r1 and r
+# r: rank
+# r1: positive index of inertia (r1<r0
+
+def genLambda(r, r1):
+    Lambda = np.concatenate((np.concatenate((np.eye(r1),np.zeros((r1,r-r1))), axis = 1),\
+                    np.concatenate((np.zeros((r-r1,r1)),-1*np.eye(r-r1)), axis = 1)),axis = 0)
+    return Lambda
 
 
 # This function calculates the lowrank matrix by given U and r1
@@ -130,10 +271,11 @@ def LtoU(L, rhatThres, Id):
 
 def UtoL(U, r1):
     r = np.size(U, 1)
-    Lambda = np.concatenate((np.concatenate((np.eye(r1),np.zeros((r1,r-r1))), axis = 1),\
-                    np.concatenate((np.zeros((r-r1,r1)),-1*np.eye(r-r1)), axis = 1)),axis = 0)
+    Lambda = genLambda(r, r1)
     L = np.matmul(U, np.matmul(Lambda, U.T))
     return L
+
+
 
 
 
@@ -174,6 +316,7 @@ def CalTrueErr(TrueError, S0, L0, tSparse, tLowrank):
     return TrueError
 
 
+
 # This function calculates the loss given sample covariance of two groups
 # ObjLoss: list to save loss
 # hatSigmaX, hatSigmaY: sample covariance of two groups
@@ -192,14 +335,6 @@ def LossSampCov(ObjLoss, hatSigmaX, hatSigmaY, S0, U0, L0, r1hat):
 
 
 
-# This function generates Lambda by given r1 and r
-# r: rank
-# r1: positive index of inertia (r1<r0
-
-def genLambda(r, r1):
-    Lambda = np.concatenate((np.concatenate((np.eye(r1),np.zeros((r1,r-r1))), axis = 1),\
-                    np.concatenate((np.zeros((r-r1,r1)),-1*np.eye(r-r1)), axis = 1)),axis = 0)
-    return Lambda
 
 
 
@@ -253,91 +388,89 @@ def MaxDist(S0, U0, S1, U1, r1hat, rhat):
 
 
  
-# This function implements our proposed algorithm in Stage II: convergence
-# S0, U0: initial value
-# hatSigmaX: sample covariance of X
-# hatSigmaY: sample covariance of Y
-# tSparse, tLowrank: true sparse, true lowrank
-# d, rhat, r1hat: sample size, dimension, rank, positive inertia
-# betahat, alphahat, shat: tuning parameter
-# eta1, eta2: step size
-# TrueError: vector to save error
-# ObjLoss: objective loss
-# Result: class to save result
-# maxIter: maximum iteration
-# eps: precision error
 
-        
-def OurConverg(S0, U0, hatSigmaX, hatSigmaY, tSparse, tLowrank, d, rhat, r1hat, betahat,\
-               alphahat, shat, eta1, eta2, TrueError, ObjLoss, Result, maxIter, eps):
-    hatDiff = hatSigmaY - hatSigmaX
-    # Iteration
-    k = 0
-    Idend = 1
-    Lambda0 = genLambda(rhat, r1hat)
-    if rhat > 0:
-        Const = np.linalg.norm(U0,2)
 
-    TimeStart = time.time()
-    while k <= maxIter:
-        # calculate some common terms
-        Term1 = S0 + UtoL(U0, r1hat)
-        Term2 = np.matmul(np.matmul(hatSigmaX, Term1), hatSigmaY)
-        Term3 = np.matmul(np.matmul(hatSigmaY, Term1), hatSigmaX)
-        Term4 = np.matmul(U0, Lambda0)
-        Term5 = np.matmul(Term2, Term4)
-        Term6 = np.matmul(Term3, Term4)
-        Term7 = np.matmul(hatDiff, Term4)
-        Term8 = np.matmul(U0.T, U0)
 
-        # iteration S
-        S12 = S0 - eta1 * (0.5*Term2 + 0.5*Term3 - hatDiff)
-        S13 = HardTrun(S12, shat)
-        S1 = PropTrun(S13, alphahat)
-        # iteration U
-        if rhat>0:
-            U12 = U0 - eta2 * (Term5 + Term6 - 2 * Term7) - eta2/2 * (np.matmul(U0, Term8) \
-                           - np.matmul(np.matmul(Term4, Term8), Lambda0))
-            Incobound = 2 * Const * (betahat*rhat/d)**(1/2)
-            U1 = ProjInco(U12, Incobound)
-        else:
-            U1 = U0    
-        # calculate error
-        succeps = MaxDist(S0, U0, S1, U1, r1hat, rhat)
-        L1 = UtoL(U1, r1hat)
-        TrueError = CalTrueErr(TrueError, S1, L1, tSparse, tLowrank)
-
-        ObjLoss = LossSampCov(ObjLoss, hatSigmaX, hatSigmaY, S1, U1, L1, r1hat)
-        if ObjLoss[-1] > ObjLoss[-2]:  # if loss increase, we need decrease step size
-            eta1 = eta1/(k+1)
-            eta2 = eta2/(k+1)        
-        if succeps <= eps:
-            Idend = 0
-            break
-        
-        S0 = S1.copy()
-        U0 = U1.copy()
-        k = k + 1
+ 
     
-    TimeEnd = time.time()
-    # save results
-    Result.CostTime =  TimeEnd - TimeStart
-    Result.Idend = Idend
-    Result.TrueError = TrueError
-    Result.ObjLoss = ObjLoss
-    Result.Sparse = S1
-    Result.Lowrank = L1
-    Result.tSparse = tSparse
-    Result.tLowrank = tLowrank
-    Result.Iternum = len(TrueError)
-    
+# This function calculates the loss value on test set
+# TestX, TestY: dataset from two groups
+# Result: class
+
+def Loss(TestX, TestY, Result):
+    CovTestX = np.cov(TestX,rowvar = False)
+    CovTestY = np.cov(TestY,rowvar = False)
+    DiffCov = CovTestY - CovTestX
+    DeltaHat = Result.Sparse + Result.Lowrank
+    A = np.matmul(DeltaHat, np.matmul(CovTestX, np.matmul(DeltaHat, CovTestY)))
+    B = np.matmul(DeltaHat, DiffCov)
+    Return1 = 0.5 * np.trace(A) - np.trace(B)
+    ReturnM2 = (np.matmul(CovTestX, np.matmul(DeltaHat, CovTestY)) + np.matmul(CovTestX, np.matmul(DeltaHat, CovTestY)))/2 - DiffCov
+    Return2 = np.max(np.abs(ReturnM2))
+    Return3 = np.linalg.norm(ReturnM2, 'fro')
+    return Return1, Return2, Return3
+
+
+   
+
+
+
+# This  function implements our two-stage algorithm
+# X, Y: data
+# SelectParam: selected parameter
+
+def OurApproach(X,Y,SelectParam):
+    n, d = np.size(X,0), np.size(X,1)
+    hatSigmaX = np.cov(X,rowvar = False)
+    hatSigmaY = np.cov(Y,rowvar = False)
+    # run our algorithm
+    Result = OurTwoStageMethod(hatSigmaX,hatSigmaY,np.zeros((d,d)),np.zeros((d,d)),n,d,SelectParam[0],\
+                                   SelectParam[1],SelectParam[2],int(SelectParam[3]))
+
     return Result
 
 
+# This function slelcts the combination of parameters that can minimize the loss on test set
+# TrainX, TrainY, TestX, TestY: data of two groups
+# Betahat: incoherence condition parameter
+# Alphahat: sparsity proportion parameter
+# Shatprob: sparsity parameter
+# Rhat: rank parameter
+
+def ChooseComb(TrainX, TrainY, TestX, TestY, Betahat = [1,3], Alphahat = [0.1,0.3,0.5,0.8],\
+               Shatprob = [5,10,30,35], Rhat = [42,45,48]):
+    d = np.size(TrainX,1)
+    n = np.size(TrainX,0)
+    # calculate covariance matrix for two groups
+    hatSigmaX = np.cov(TrainX,rowvar = False)
+    hatSigmaY = np.cov(TrainY,rowvar = False)
+
+    # for loop to choose combination
+    Param = np.zeros((0, 5))
+    for betahat in Betahat:
+        for alphahat in Alphahat:
+            for shatprob in Shatprob:
+                for rhat in Rhat:
+                    print('Choose Param', [betahat, alphahat, shatprob, rhat])
+                    Result = OurTwoStageMethod(hatSigmaX, hatSigmaY, np.zeros((d,d)),\
+                                        np.zeros((d,d)), n,d, betahat, alphahat, shatprob, rhat)
+                    print('Conv', Result.Idend)
+                    
+                    if Result.Idend == 0:
+                        testloss1, testloss2, testloss3 = Loss(TestX, TestY, Result)
+                        print('Loss', [testloss1, testloss2, testloss3])
+                        Param = np.concatenate((Param, np.array([[betahat, alphahat, shatprob,\
+                                                                  rhat, testloss1]])), axis=0) 
+    
+    if len(Param) > 0:
+        SelectParam = Param[np.argmin(Param[:,4]), 0:4]
+    else:
+        SelectParam = np.array([4, 0.15, 0.3, 4])
+    
+    return SelectParam
 
 
 # This function implements our two-stage algorithm
-
 # hatSigmaX, hatSigmaY: sample covariance matrix
 # tSparse, tLowrank: true result
 # Result: class that saves the result
@@ -346,11 +479,9 @@ def OurConverg(S0, U0, hatSigmaX, hatSigmaY, tSparse, tLowrank, d, rhat, r1hat, 
 # maxIter: maximum iteration
 # eps: thresholding error
 
-
-def OurTwoStageMethod(hatSigmaX, hatSigmaY, tSparse, tLowrank, n, betahat = 1, alphahat = 0.5,\
-                       shatprob = 5, rhat = 2, eta1 = 0.1, maxIter = 50000, eps = 1e-5):
+def OurTwoStageMethod(hatSigmaX, hatSigmaY, tSparse, tLowrank, n,d, betahat = 1, alphahat = 0.5,\
+                       shatprob = 5, rhat = 2, eta1 = 0.01, maxIter = 20000, eps = 1e-5):
     Result = SimuResult()
-    d = np.size(hatSigmaX,1)
     shat = int(d*(1 + shatprob))  # sparsity
     # Run Stage-I algorithm
     S0, U0, L0, r1hat = OurInitial(hatSigmaX,hatSigmaY,alphahat,shat,rhat,n)    
@@ -371,141 +502,7 @@ def OurTwoStageMethod(hatSigmaX, hatSigmaY, tSparse, tLowrank, n, betahat = 1, a
     else:
         eta2 = 1
     
-    Result = OurConverg(S0, U0, hatSigmaX, hatSigmaY, tSparse, tLowrank, d, rhat, r1hat,\
+    Result = OurConverg(S0, U0, L0, hatSigmaX, hatSigmaY, tSparse, tLowrank, d, rhat, r1hat,\
                         betahat, alphahat, shat, eta1, eta2, TrueError, ObjLoss, Result, \
                         maxIter, eps)
     return Result
- 
-
-    
-# This function calculates the loss value on test set
-# TestX, TestY: dataset from two groups
-# Result: class
-
-def Loss(TestX, TestY, Result):
-    CovTestX = np.cov(TestX,rowvar = False)
-    CovTestY = np.cov(TestY,rowvar = False)
-    DiffCov = CovTestY - CovTestX
-    DeltaHat = Result.Sparse + Result.Lowrank
-    A = np.matmul(DeltaHat, np.matmul(CovTestX, np.matmul(DeltaHat, CovTestY)))
-    B = np.matmul(DeltaHat, DiffCov)
-    return 0.5 * np.trace(A) - np.trace(B)
-
-
-   
-
-# This function slelcts the combination of parameters that can minimize the loss on test set
-# X, Y: data of two groups
-# Betahat: incoherence condition parameter
-# Alphahat: sparsity proportion parameter
-# Shatprob: sparsity parameter
-# Rhat: rank parameter
-
-def ChooseComb(X, Y, Betahat = [1,3], Alphahat = [0.1, 0.3,0.5,0.8],\
-               Shatprob = [5,10,30], Rhat = [42, 45, 48]):
-    d = np.size(X,1)
-    # separate into training set and test set
-    TrainX, TestX = SplitData(X)
-    TrainY, TestY = SplitData(Y)
-    n = np.size(TrainX, 0)
-    # calculate covariance matrix for two groups
-    hatSigmaX = np.cov(TrainX,rowvar = False)
-    hatSigmaY = np.cov(TrainY,rowvar = False)
-
-    # for loop to choose combination
-    Param = np.zeros((0, 5))
-    for betahat in Betahat:
-        for alphahat in Alphahat:
-            for shatprob in Shatprob:
-                for rhat in Rhat:
-                    print('Choose Param', [betahat, alphahat, shatprob, rhat])
-                    Result = OurTwoStageMethod(hatSigmaX, hatSigmaY, np.zeros((d,d)),\
-                                        np.zeros((d,d)), n, betahat, alphahat, shatprob, rhat)
-                    print('Conv', Result.Idend)
-                    
-                    if Result.Idend == 0:
-                        testloss = Loss(TestX, TestY, Result)
-                        print('Loss', testloss)
-                        Param = np.concatenate((Param, np.array([[betahat, alphahat, shatprob,\
-                                                                  rhat, testloss]])), axis=0) 
-    
-    if len(Param) > 0:
-        SelectParam = Param[np.argmin(Param[:,4]), 0:4]
-    else:
-        SelectParam = np.array([4, 0.15, 0.3, 4])
-    
-    return SelectParam
-
-
-
-
-# This  function implements our two-stage algorithm
-# X, Y: data
-# SelectParam: selected parameter
-
-def OurApproach(X,Y,SelectParam):
-    n, d = np.size(X,0), np.size(X,1)
-    hatSigmaX = np.cov(X,rowvar = False)
-    hatSigmaY = np.cov(Y,rowvar = False)
-    # calculate true value
-    tSparse = np.zeros((d,d))
-    tLowrank = np.zeros((d,d))
-    # run our algorithm
-    Result = OurTwoStageMethod(hatSigmaX,hatSigmaY,tSparse,tLowrank,n,SelectParam[0],\
-                                   SelectParam[1],SelectParam[2],int(SelectParam[3]))
-    # calculate true rank
-    tU, tr, tr1 =  LtoU(tLowrank, 1e-9, 1)
-    Result.Rank = [tr, tr1]
-
-    return Result
-
-
-
-
-
-
-def MyMain(DataDir = os.getcwd() + '/../data/Groupdata/', OutputDir = os.getcwd() + '/ResultMatrix'):
-    # load data
-    X = pd.read_csv(DataDir + 'Control.csv', index_col=0).values
-    Y = pd.read_csv(DataDir + 'Test.csv', index_col=0).values
-    nx = np.size(X,0)
-    ny = np.size(Y,0)
-    if nx<ny:
-        Y = Y[random.sample(range(ny), nx), :]
-    else:
-        X = X[random.sample(range(nx), ny), :]
-    
-    # remove file
-    filelist = glob.glob(OutputDir + '/*')
-    for f in filelist:
-        os.remove(f)
-    print('Remove result file. Done!')
-    # select parameter
-    SelectParam = ChooseComb(X, Y)
-              
-    # Use the selected parameters to calculate the error
-    Result = OurApproach(X, Y, SelectParam)
-
-    # save result to txt file
-    SS = pd.DataFrame(Result.Sparse)
-    print(Result.ObjLoss[-1])
-    SS.to_csv(OutputDir + '/mySparse.csv')
-            
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

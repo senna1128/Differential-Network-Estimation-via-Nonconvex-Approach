@@ -1,1 +1,1 @@
-/Users/senna/course/Mladen/pro3/simulation/realdata/data/Atlas/fsl/data/atlases/HarvardOxford/HarvardOxford-cort-maxprob-thr25-2mm.nii.gz
+/Users/senna/course/Mladen/project/pro3/BiometrikaRevision/simu/realdata/data/Atlas/fsl/data/atlases/HarvardOxford/HarvardOxford-cort-maxprob-thr25-2mm.nii.gz

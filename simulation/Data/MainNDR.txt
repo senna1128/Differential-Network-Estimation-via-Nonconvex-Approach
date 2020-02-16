@@ -1,0 +1,5 @@
+N 200 D 50 R 0 IdConver 4
+N 1000 D 100 R 1 IdConver 4
+N 10000 D 100 R 2 IdConver 4
+N 150 D 100 R 1 IdConver 6
+N 150 D 100 R 2 IdConver 6
